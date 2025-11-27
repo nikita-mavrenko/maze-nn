@@ -175,7 +175,6 @@ def create_state_for_nn(maze_matrix, current_pos, maze_generator):
     state = np.zeros((matrix_size, matrix_size), dtype=np.float32)
     state[:] = maze_matrix
 
-    # Отмечаем текущую позицию и цель
     ax, ay = (2 * current_pos[0] - 1, 2 * current_pos[1] - 1)
     gx, gy = (2 * maze_generator.goal[0] - 1, 2 * maze_generator.goal[1] - 1)
 
@@ -208,7 +207,6 @@ def get_possible_moves(current_pos, maze_generator):
     if maze_generator.maze_obj.maze_map[cell]['W']: moves.append((x, y - 1))
     if maze_generator.maze_obj.maze_map[cell]['E']: moves.append((x, y + 1))
 
-    # Фильтруем только допустимые координаты
     moves = [(nx, ny) for nx, ny in moves if 1 <= nx <= MAZE_SIZE and 1 <= ny <= MAZE_SIZE]
     return moves
 
