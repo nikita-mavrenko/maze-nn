@@ -18,8 +18,7 @@ class DatasetGenerator:
         self.label_encoder = LabelEncoder()
 
         # вверх, вниз, влево, вправо
-        self.actions = ['W', 'S', 'A', 'D']
-        self.label_encoder.fit(self.actions)
+        self.label_encoder.fit(['N', 'S', 'W', 'E'])
 
     def generate_dataset(self, chunks_folder, chunks=10):
         chunk_size = self.dataset_size // chunks
@@ -62,46 +61,11 @@ class DatasetGenerator:
             print(f"Чанк сохранён: {chunk_path} ({len(X_chunk)} примеров)")
             all_chunks.append(chunk_path)
 
-            # Очищаем память
             del X_chunk, y_chunk, meta_chunk
             gc.collect()
 
         print("Генерация завершена! Чанки готовы.")
         return all_chunks
-
-    # def generate_dataset(self) -> Tuple[np.ndarray, np.ndarray, List[Dict]]:
-    #     X = []  # лабиринт + позиция
-    #     y = []  # следующее действие
-    #     metadata = []
-    #
-    #     print(f"Генерация датасета из {self.dataset_size} лабиринтов...")
-    #
-    #     for i in range(self.dataset_size):
-    #         print(f"Сгенерировано {i + 1}/{self.dataset_size} лабиринтов")
-    #
-    #         maze_matrix, maze_obj = self.maze_generator.generate_maze()
-    #
-    #         optimal_path = self.maze_generator.get_path()
-    #
-    #         if optimal_path is None:
-    #             continue
-    #
-    #         maze_samples, action_samples, maze_meta = self._extract_training_samples(
-    #             maze_matrix, optimal_path, maze_obj
-    #         )
-    #
-    #         X.extend(maze_samples)
-    #         y.extend(action_samples)
-    #         metadata.extend(maze_meta)
-    #
-    #     X_array = np.array(X, dtype=np.float32)
-    #     y_array = np.array(y, dtype=np.int64)
-    #
-    #     print(f"Датасет сгенерирован: {len(X_array)} samples")
-    #     print(f"Размерность X: {X_array.shape}")
-    #     print(f"Размерность y: {y_array.shape}")
-    #
-    #     return X_array, y_array, metadata
 
     def _extract_training_samples(self, maze_matrix: np.ndarray,
                                   optimal_path: List[Tuple[int, int]],
@@ -119,7 +83,7 @@ class DatasetGenerator:
             if action is None:
                 continue
 
-            state_representation = self._create_state_representation(
+            state_representation = self.create_state_representation(
                 maze_matrix, current_pos, maze_obj
             )
 
@@ -136,24 +100,18 @@ class DatasetGenerator:
 
         return samples_X, samples_y, samples_meta
 
-    def _get_action(self, current_pos: Tuple[int, int], next_pos: Tuple[int, int]) -> str:
+    def _get_action(self, current_pos, next_pos):
         dx = next_pos[0] - current_pos[0]
         dy = next_pos[1] - current_pos[1]
+        if dx == -1 and dy == 0: return 'N'  # вверх
+        if dx == 1 and dy == 0: return 'S'  # вниз
+        if dx == 0 and dy == -1: return 'W'  # влево
+        if dx == 0 and dy == 1: return 'E'  # вправо
+        return None
 
-        if dx == -1 and dy == 0:
-            return 'W'
-        elif dx == 1 and dy == 0:
-            return 'S'
-        elif dx == 0 and dy == -1:
-            return 'A'
-        elif dx == 0 and dy == 1:
-            return 'D'
-        else:
-            return None
-
-    def _create_state_representation(self, maze_matrix: np.ndarray,
-                                     current_pos: Tuple[int, int],
-                                     maze_obj: Any) -> np.ndarray:
+    def create_state_representation(self, maze_matrix: np.ndarray,
+                                    current_pos: Tuple[int, int],
+                                    maze_obj: Any) -> np.ndarray:
         """
         - 0: свободная клетка
         - 1: стена
