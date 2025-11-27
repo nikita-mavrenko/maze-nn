@@ -1,11 +1,12 @@
 import random
-from typing import Any
-import pyamaze
-import numpy as np
 import time
+from collections import deque
+from typing import Any
+
+import numpy as np
+import pyamaze
 from numpy import ndarray, dtype
 from pyamaze import maze
-from collections import deque
 
 
 class MazeGenerator:
@@ -53,7 +54,6 @@ class MazeGenerator:
         if self.maze_obj is None:
             raise ValueError("maze is not generated")
 
-        # Создаем агента для пути
         if path and show_path:
             a = pyamaze.agent(self.maze_obj, footprints=True)
             self.maze_obj.tracePath({a: path}, delay=0)
