@@ -1,34 +1,39 @@
 import os
+os.environ["TORCH_DYNAMO_DISABLE"] = "1"
 import torch
+import glob
 
 from torch.utils.data import TensorDataset, DataLoader
 
-from dataset import DatasetGenerator
+from dataset import DatasetGenerator, ChunkedMazeDataset
 from nn import NeuralNetwork
 from trainer import NNTrainer
 
-MAZE_SIZE = 20
-DATASET_SIZE = 400
+
+MAZE_SIZE = 10
+DATASET_SIZE = 100
 EPOCHS = 50
 VALIDATION_SPLIT = 0.1
 TEST_SPLIT = 0.1
 BATCH_SIZE = 64
+CHUNKS = 20
 
-DATASET_FILENAME = f"maze_dataset_{MAZE_SIZE}x{MAZE_SIZE}.pkl"
+DATASET_FOLDER = f"dataset_chunks_{MAZE_SIZE}x{MAZE_SIZE}"
 MODEL_FILENAME = f"maze_solver_{MAZE_SIZE}x{MAZE_SIZE}.pth"
 
 def main():
-    dataset_generator = DatasetGenerator(DATASET_SIZE, DATASET_SIZE)
+    dataset_generator = DatasetGenerator(maze_size=MAZE_SIZE, dataset_size=DATASET_SIZE)
 
     X, y, metadata = None, None, None
 
-    if os.path.exists(DATASET_FILENAME):
-        print(f"Датасет уже существует: {DATASET_FILENAME}")
-        X, y, metadata = dataset_generator.load_dataset(DATASET_FILENAME)
+    chunk_files = None
+    if not os.path.exists(DATASET_FOLDER):
+        print(f"Датасет не найден, генерируем новый: {DATASET_FOLDER}")
+        chunk_files = dataset_generator.generate_dataset(chunks=20, chunks_folder=DATASET_FOLDER)
     else:
-        print(f"Датасет не найден, генерируем новый: {DATASET_FILENAME}")
-        X, y, metadata = dataset_generator.generate_dataset()
-        dataset_generator.save_dataset(X, y, metadata, DATASET_FILENAME)
+        print(f"Датасет найден: {DATASET_FOLDER}")
+        chunk_files = sorted(glob.glob(f"{DATASET_FOLDER}/chunk_*.npz"))
+
 
     train_model = True
     if os.path.exists(MODEL_FILENAME):
@@ -37,7 +42,7 @@ def main():
     else:
         print("Обученная модель не найдена")
 
-    dataset = TensorDataset(torch.from_numpy(X), torch.from_numpy(y))
+    dataset = ChunkedMazeDataset(chunk_files)
 
     test_size = int(len(dataset) * TEST_SPLIT)
     val_size = int(len(dataset) * VALIDATION_SPLIT)
@@ -45,11 +50,13 @@ def main():
 
     train_ds, validation_ds, test_ds = torch.utils.data.random_split(dataset, [train_size, val_size, test_size])
 
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
-    validation_loader = DataLoader(validation_ds, batch_size=BATCH_SIZE, shuffle=False)
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    validation_loader = DataLoader(validation_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
     print(f"Тренировочных батчей: {len(train_loader)}")
     print(f"Валидационных батчей: {len(validation_loader)}\n")
+    print(f"Тестовых батчей: {len(test_loader)}\n")
 
     input_shape = (MAZE_SIZE * 2 + 1, MAZE_SIZE * 2 + 1)
     model = NeuralNetwork(input_shape=input_shape, num_actions=4)
@@ -64,11 +71,10 @@ def main():
     else:
         print(f"Запускаем обучение")
         trainer = NNTrainer(model)
+        trainer.device = device
         trainer.train(train_loader, validation_loader, epochs=EPOCHS)
         torch.save(model.state_dict(), MODEL_FILENAME)
         print(f"Модель сохранена {MODEL_FILENAME}")
-
-    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False)
 
     model.eval()
     correct = 0

@@ -1,7 +1,10 @@
+import gc
+import os
 import pickle
 from typing import List, Tuple, Dict, Any
 
 import numpy as np
+import torch
 from sklearn.preprocessing import LabelEncoder
 
 from maze import MazeGenerator
@@ -18,40 +21,87 @@ class DatasetGenerator:
         self.actions = ['W', 'S', 'A', 'D']
         self.label_encoder.fit(self.actions)
 
-    def generate_dataset(self) -> Tuple[np.ndarray, np.ndarray, List[Dict]]:
-        X = []  # лабиринт + позиция
-        y = []  # следующее действие
-        metadata = []
+    def generate_dataset(self, chunks_folder, chunks=10):
+        chunk_size = self.dataset_size // chunks
 
-        print(f"Генерация датасета из {self.dataset_size} лабиринтов...")
+        chunks_folder = f"dataset_chunks_{self.maze_size}x{self.maze_size}"
+        os.makedirs(chunks_folder, exist_ok=True)
+        all_chunks = []
 
-        for i in range(self.dataset_size):
-            if (i + 1) % 100 == 0:
-                print(f"Сгенерировано {i + 1}/{self.dataset_size} лабиринтов")
+        print(f"Генерация датасета длиной {self.dataset_size} по {chunks} чанков")
 
-            maze_matrix, maze_obj = self.maze_generator.generate_maze()
+        for chunk_idx in range(chunks):
+            start_idx = chunk_idx * chunk_size
+            end_idx = min((chunk_idx + 1) * chunk_size, self.dataset_size)
 
-            optimal_path = self.maze_generator.get_path()
+            X_chunk, y_chunk, meta_chunk = [], [], []
 
-            if optimal_path is None:
-                continue
+            print(f"Генерируем чанк {chunk_idx + 1}/{chunks} ({end_idx - start_idx} лабиринтов)...")
 
-            maze_samples, action_samples, maze_meta = self._extract_training_samples(
-                maze_matrix, optimal_path, maze_obj
+            for i in range(start_idx, end_idx):
+                maze_matrix, maze_obj = self.maze_generator.generate_maze()
+                path = self.maze_generator.get_path()
+                if not path or len(path) < 2:
+                    continue
+
+                samples_X, samples_y, samples_meta = self._extract_training_samples(
+                    maze_matrix, path, maze_obj
+                )
+                X_chunk.extend(samples_X)
+                y_chunk.extend(samples_y)
+                meta_chunk.extend(samples_meta)
+                print(f"Сгенерирован лабиринт: {i - start_idx + 1}/{end_idx - start_idx}")
+
+            chunk_path = f"{chunks_folder}/chunk_{chunk_idx:03d}.npz"
+            np.savez_compressed(
+                chunk_path,
+                X=np.array(X_chunk, dtype=np.float32),
+                y=np.array(y_chunk, dtype=np.int64),
+                metadata=meta_chunk
             )
+            print(f"Чанк сохранён: {chunk_path} ({len(X_chunk)} примеров)")
+            all_chunks.append(chunk_path)
 
-            X.extend(maze_samples)
-            y.extend(action_samples)
-            metadata.extend(maze_meta)
+            # Очищаем память
+            del X_chunk, y_chunk, meta_chunk
+            gc.collect()
 
-        X_array = np.array(X, dtype=np.float32)
-        y_array = np.array(y, dtype=np.int64)
+        print("Генерация завершена! Чанки готовы.")
+        return all_chunks
 
-        print(f"Датасет сгенерирован: {len(X_array)} samples")
-        print(f"Размерность X: {X_array.shape}")
-        print(f"Размерность y: {y_array.shape}")
-
-        return X_array, y_array, metadata
+    # def generate_dataset(self) -> Tuple[np.ndarray, np.ndarray, List[Dict]]:
+    #     X = []  # лабиринт + позиция
+    #     y = []  # следующее действие
+    #     metadata = []
+    #
+    #     print(f"Генерация датасета из {self.dataset_size} лабиринтов...")
+    #
+    #     for i in range(self.dataset_size):
+    #         print(f"Сгенерировано {i + 1}/{self.dataset_size} лабиринтов")
+    #
+    #         maze_matrix, maze_obj = self.maze_generator.generate_maze()
+    #
+    #         optimal_path = self.maze_generator.get_path()
+    #
+    #         if optimal_path is None:
+    #             continue
+    #
+    #         maze_samples, action_samples, maze_meta = self._extract_training_samples(
+    #             maze_matrix, optimal_path, maze_obj
+    #         )
+    #
+    #         X.extend(maze_samples)
+    #         y.extend(action_samples)
+    #         metadata.extend(maze_meta)
+    #
+    #     X_array = np.array(X, dtype=np.float32)
+    #     y_array = np.array(y, dtype=np.int64)
+    #
+    #     print(f"Датасет сгенерирован: {len(X_array)} samples")
+    #     print(f"Размерность X: {X_array.shape}")
+    #     print(f"Размерность y: {y_array.shape}")
+    #
+    #     return X_array, y_array, metadata
 
     def _extract_training_samples(self, maze_matrix: np.ndarray,
                                   optimal_path: List[Tuple[int, int]],
@@ -150,3 +200,24 @@ class DatasetGenerator:
 
         self.label_encoder = dataset['action_encoder']
         return dataset['X'], dataset['y'], dataset['metadata']
+
+
+class ChunkedMazeDataset(torch.utils.data.Dataset):
+    def __init__(self, chunk_files):
+        self.chunk_files = chunk_files
+        self.lengths = []
+        self.cumsum = [0]
+        for f in chunk_files:
+            data = np.load(f)
+            length = len(data['y'])
+            self.lengths.append(length)
+            self.cumsum.append(self.cumsum[-1] + length)
+
+    def __len__(self):
+        return self.cumsum[-1]
+
+    def __getitem__(self, idx):
+        chunk_idx = next(i for i, cum in enumerate(self.cumsum) if idx < cum) - 1
+        local_idx = idx - self.cumsum[chunk_idx]
+        data = np.load(self.chunk_files[chunk_idx])
+        return torch.from_numpy(data['X'][local_idx]), torch.tensor(int(data['y'][local_idx]))
